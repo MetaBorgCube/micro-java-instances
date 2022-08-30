@@ -1,0 +1,13 @@
+module Main
+
+imports
+
+  Syntax
+  Analysis
+  Refactoring
+
+language
+
+  extensions : jvi
+
+  provider : target/metaborg/stratego.jar

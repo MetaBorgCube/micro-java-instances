@@ -1,0 +1,151 @@
+module statics
+
+imports
+  signatures/javainst-sig
+  signatures/Common-sig
+
+rules programOk : Start
+
+  programOk(start) :- {s0}
+    new s0,
+    startOk(s0, start).
+
+
+rules projectOk : scope
+
+  projectOk(s0).
+
+
+rules fileOk : scope * Start
+
+  fileOk(s0, start) :- startOk(s0, start).
+
+rules startOk : scope * Start
+  startOk(s0, Program(decls)) :-
+    declsOk(s0, decls).
+
+
+rules declOk : scope * Decl
+
+  declsOk maps declOk(*, list(*))
+
+  declOk(s, ClassDecl(name, members)) :- {s_ci T}
+    new s_ci, s_ci -P-> s,    // scope with instance fields and methods
+    T == CLASS(s_ci),
+    !type[name, T] in s,
+    @name.type := T,
+    memberDeclsOk(s_ci, members).
+
+
+rules memberDeclOk : scope * MemberDecl
+
+  memberDeclsOk maps memberDeclOk(*, list(*))
+
+  memberDeclOk(s, FieldDecl(type, name)) :- {T}
+    typeOfType(s, type) == T,
+    !var[name, T] in s,
+    @name.type := T.
+
+  memberDeclOk(s, FieldDeclWithValue(type, name, exp)) :- {T TE}
+    typeOfType(s, type) == T,
+    typeOfExp(s, exp) == TE,
+    TE == T | error $[Expected [T], got [TE]],
+    !var[name, T] in s,
+    @name.type := T.
+
+  memberDeclOk(s, MethodDecl(type, name, stmts, rexp)) :- {s_m TR T TER}
+    new s_m, s_m -P-> s,        // scope for method body
+    typeOfType(s, type) == TR,
+    T == METHOD(TR),
+    !var[name, T] in s,
+    @name.type := T,
+    stmtsOk(s_m, stmts),
+    typeOfExp(s_m, rexp) == TER,
+    TER == TR | error $[Expected [TR], got [TER]].
+
+
+rules stmtOk : scope * Stmt
+
+  stmtsOk maps stmtOk(*, list(*))
+
+  stmtOk(s, DeclareVar(type, name)) :- {T}
+    typeOfType(s, type) == T,
+    !var[name, T] in s,
+    @name.type := T.
+
+  stmtOk(s, DeclareVarWithValue(type, name, exp)) :- {T TE}
+    typeOfType(s, type) == T,
+    typeOfExp(s, exp) == TE,
+    TE == T | error $[Expected [T], got [TE]],
+    !var[name, T] in s,
+    @name.type := T.
+
+
+rules typeOfExp : scope * Exp -> TYPE
+
+  typeOfExp(s, e@Int(_)) = INT() :-
+    @e.type := INT().
+
+  typeOfExp(s, Ref(name)) = T :- {decl}
+    query var
+      filter P* and { d' :- d' == name }
+      min $ < P and true
+      in s |-> [(_, (decl, T))] | error $[Variable not found: [name]],
+    @name.ref := decl,
+    @name.type := T.
+
+  typeOfExp(s, Member(exp, name)) = T :- {s_class TE decl}
+    typeOfExp(s, exp) == TE,
+    TE == INST(CLASS(s_class)) | error $[Expected a class instance, got [TE]],
+    query var
+      filter e and { d' :- d' == name }
+      min and true
+      in s_class |-> [(_, (decl, T))] | error $[Member not found: [name]],
+    @name.ref := decl,
+    @name.type := T.
+
+  typeOfExp(s, Call(exp)) = TR :- {TM}
+    typeOfExp(s, exp) == TM,
+    TM == METHOD(TR) | error $[Expected a method, got [TM]].
+
+  typeOfExp(s, New(type)) = T :-
+    typeOfType(s, type) == T,
+    T == INST(CLASS(_)) | error $[Expected a class instance, got [T]].
+
+
+rules typeOfType : scope * Type -> TYPE
+
+  typeOfType(s, t@IntType()) = T :-
+    T == INT(),
+    @t.type := T.
+
+  typeOfType(s, t@ClassType(name)) = TI :- {T}
+    resolveClass(s, name) == T,
+    CLASS(_) == T | error $[Expected a class, got [T]],
+    TI == INST(T),
+    @t.type := TI.
+
+
+rules resolveClass : scope * string -> TYPE
+
+  resolveClass(s, name) = T :- {decl}
+    query type
+      filter P* and { d' :- d' == name }
+      min $ < P and true
+      in s |-> [(_, (decl, T))] | error $[Class not found: [name]],
+    @name.ref := decl.
+
+
+signature
+  sorts TYPE
+  constructors
+    CLASS   : scope -> TYPE
+    INST    : TYPE -> TYPE
+    METHOD  : TYPE -> TYPE
+    INT     : TYPE
+  relations
+    type    : string -> TYPE
+    var     : string -> TYPE
+  name-resolution
+    labels
+      P     // lexical parent
